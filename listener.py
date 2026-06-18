@@ -43,19 +43,20 @@ def classify_message(text):
     today = date.today().isoformat()
     prompt = f"""Bugungi sana: {today} (Asia/Tashkent). Foydalanuvchi botga shu xabarni yozdi: "{text}"
 
-Xabar turini aniqla va JSON formatda chiqar, hech qanday qo'shimcha matn yozma:
-- Agar bu aniq bir martalik VAZIFA bo'lsa (qilinishi kerak bo'lgan ish, ko'pincha sana/vaqt bilan):
-  {{"type": "task", "title": "vazifa nomi", "date": "YYYY-MM-DD", "time": "HH:MM yoki null"}}
-- Agar bu HAFTALIK/uzoq muddatli MAQSAD bo'lsa (masalan o'rganish, mashq qilish, odat):
-  {{"type": "goal", "text": "maqsad matni"}}
-- Agar foydalanuvchi Google Meet/video uchrashuv link so'rasa:
-  {{"type": "meet", "title": "uchrashuv nomi (aytilmagan bo'lsa 'Uchrashuv')"}}
-- Agar foydalanuvchi pochta/email/gmail'ni HOZIR tekshirishni so'rasa (masalan "pochtamni tekshir", "gmaildagi xabarlarni ko'rsat"):
-  {{"type": "gmail_check"}}
-- Agar bu vazifa ham, maqsad ham emas, oddiy SAVOL yoki SUHBAT bo'lsa:
-  {{"type": "chat"}}
-- Agar tushunarsiz bo'lsa:
-  {{"type": "unknown"}}
+Xabar turini aniqla va JSON formatda chiqar, hech qanday qo'shimcha matn yozma. Quyidagi tartibda tekshir:
+
+1. Agar xabarda "meet", "google meet", "uchrashuv link", "video chat/qo'ng'iroq" so'zlari bo'lsa — bu DOIM "meet" turi, hech qachon "task" emas:
+   {{"type": "meet", "title": "uchrashuv nomi (aytilmagan bo'lsa 'Uchrashuv')"}}
+2. Agar xabarda "pochta", "email", "gmail" so'zi bilan HOZIR tekshirish so'ralsa (masalan "pochtamni tekshir", "gmaildagi xabarlarni ko'rsat") — bu DOIM "gmail_check":
+   {{"type": "gmail_check"}}
+3. Agar bu aniq bir martalik VAZIFA bo'lsa (qilinishi kerak bo'lgan ish, ko'pincha sana/vaqt bilan, va 1/2-band bilan mos kelmasa):
+   {{"type": "task", "title": "vazifa nomi", "date": "YYYY-MM-DD", "time": "HH:MM yoki null"}}
+4. Agar bu HAFTALIK/uzoq muddatli MAQSAD bo'lsa (masalan o'rganish, mashq qilish, odat):
+   {{"type": "goal", "text": "maqsad matni"}}
+5. Agar bu vazifa ham, maqsad ham emas, oddiy SAVOL yoki SUHBAT bo'lsa:
+   {{"type": "chat"}}
+6. Agar tushunarsiz bo'lsa:
+   {{"type": "unknown"}}
 
 Sana aytilmagan bo'lsa bugungi sanani ishlat. Vaqt aytilmagan bo'lsa time ni null qil. O'ylab topma, faqat berilgan matndan foydalan."""
 
