@@ -1,10 +1,7 @@
-import asyncio
-import io
 import json
 import time
 from datetime import date
 
-import edge_tts
 import requests
 
 import db
@@ -14,7 +11,6 @@ API = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
 HUB_THREAD = TOPICS["bot_bilan_gaplashish"]
 TASK_THREAD = TOPICS["bugungi_vazifalar"]
 GOAL_THREAD = TOPICS["haftalik_maqsadlar"]
-TTS_VOICE = "uz-UZ-MadinaNeural"
 
 PENDING_TASK = None
 
@@ -26,28 +22,6 @@ def send(thread_id, text):
         "text": text,
         "parse_mode": "HTML",
     })
-
-
-def send_voice(thread_id, text):
-    async def synthesize():
-        buf = io.BytesIO()
-        comm = edge_tts.Communicate(text, TTS_VOICE)
-        async for chunk in comm.stream():
-            if chunk["type"] == "audio":
-                buf.write(chunk["data"])
-        return buf.getvalue()
-
-    try:
-        audio = asyncio.run(synthesize())
-    except Exception as e:
-        print(f"TTS xato: {e}")
-        return
-
-    requests.post(
-        f"{API}/sendAudio",
-        data={"chat_id": CHAT_ID, "message_thread_id": thread_id},
-        files={"audio": ("javob.mp3", audio, "audio/mpeg")},
-    )
 
 
 def transcribe_voice(file_id):
@@ -179,7 +153,6 @@ def handle_chat(text):
     )
     reply = resp.json()["choices"][0]["message"]["content"].strip()
     send(HUB_THREAD, reply)
-    send_voice(HUB_THREAD, reply)
 
 
 def handle_task(data):
