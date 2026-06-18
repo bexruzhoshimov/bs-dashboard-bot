@@ -8,6 +8,7 @@ import db
 from config import GROQ_API_KEY, TELEGRAM_BOT_TOKEN, CHAT_ID, TOPICS
 
 API = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
+HUB_THREAD = TOPICS["bot_bilan_gaplashish"]
 TASK_THREAD = TOPICS["bugungi_vazifalar"]
 GOAL_THREAD = TOPICS["haftalik_maqsadlar"]
 
@@ -35,14 +36,20 @@ def transcribe_voice(file_id):
     return resp.json().get("text", "").strip()
 
 
-def parse_task(text):
+def classify_message(text):
+    """Xabarni vazifa/maqsad/noaniq turlarga ajratadi va kerakli maydonlarni chiqaradi."""
     today = date.today().isoformat()
-    prompt = f"""Bugungi sana: {today} (Asia/Tashkent). Foydalanuvchi vazifa yozdi: "{text}"
+    prompt = f"""Bugungi sana: {today} (Asia/Tashkent). Foydalanuvchi botga shu xabarni yozdi: "{text}"
 
-Shu vazifani JSON formatda chiqar, hech qanday qo'shimcha matn yozma:
-{{"title": "vazifa nomi", "date": "YYYY-MM-DD", "time": "HH:MM yoki null"}}
+Xabar turini aniqla va JSON formatda chiqar, hech qanday qo'shimcha matn yozma:
+- Agar bu aniq bir martalik VAZIFA bo'lsa (qilinishi kerak bo'lgan ish, ko'pincha sana/vaqt bilan):
+  {{"type": "task", "title": "vazifa nomi", "date": "YYYY-MM-DD", "time": "HH:MM yoki null"}}
+- Agar bu HAFTALIK/uzoq muddatli MAQSAD bo'lsa (masalan o'rganish, mashq qilish, odat):
+  {{"type": "goal", "text": "maqsad matni"}}
+- Agar tushunarsiz bo'lsa:
+  {{"type": "unknown"}}
 
-Agar sana aytilmagan bo'lsa, bugungi sanani ishlat. Agar vaqt aytilmagan bo'lsa, time ni null qil. O'ylab topma, faqat berilgan matndan foydalan."""
+Sana aytilmagan bo'lsa bugungi sanani ishlat. Vaqt aytilmagan bo'lsa time ni null qil. O'ylab topma, faqat berilgan matndan foydalan."""
 
     resp = requests.post(
         "https://api.groq.com/openai/v1/chat/completions",
@@ -61,22 +68,20 @@ Agar sana aytilmagan bo'lsa, bugungi sanani ishlat. Agar vaqt aytilmagan bo'lsa,
     raw = raw.strip("`").removeprefix("json").strip()
     try:
         data = json.loads(raw)
-        if "title" not in data or "date" not in data:
+        if data.get("type") not in ("task", "goal", "unknown"):
             return None
         return data
-    except (json.JSONDecodeError, KeyError):
+    except json.JSONDecodeError:
         return None
 
 
-def handle_task_message(text):
-    parsed = parse_task(text)
-    if not parsed:
-        send(TASK_THREAD, "Tushunmadim, qaytadan aniqroq yozing iltimos.")
+def handle_task(data):
+    title = data.get("title")
+    task_date = data.get("date")
+    task_time = data.get("time")
+    if not title or not task_date:
+        send(HUB_THREAD, "Vazifani tushunolmadim, qaytadan aniqroq yozing iltimos.")
         return
-
-    title = parsed["title"]
-    task_date = parsed["date"]
-    task_time = parsed.get("time")
 
     event_id, event_link = None, None
     try:
@@ -87,17 +92,23 @@ def handle_task_message(text):
 
     db.add_task(title, task_date, task_time, event_id, event_link)
 
-    reply = f"✅ <b>Vazifa qo'shildi</b>\n{title}\n📅 {task_date}"
+    detail = f"✅ <b>Vazifa qo'shildi</b>\n{title}\n📅 {task_date}"
     if task_time:
-        reply += f" ⏰ {task_time}"
+        detail += f" ⏰ {task_time}"
     if event_link:
-        reply += f"\n<a href=\"{event_link}\">Calendar'da ochish</a>"
-    send(TASK_THREAD, reply)
+        detail += f"\n<a href=\"{event_link}\">Calendar'da ochish</a>"
+    send(TASK_THREAD, detail)
+    send(HUB_THREAD, f"✅ Qabul qilindi → Bugungi vazifalar: {title}")
 
 
-def handle_goal_message(text):
+def handle_goal(data):
+    text = data.get("text")
+    if not text:
+        send(HUB_THREAD, "Maqsadni tushunolmadim, qaytadan aniqroq yozing iltimos.")
+        return
     db.add_goal(text)
-    send(GOAL_THREAD, "✅ Maqsad saqlandi")
+    send(GOAL_THREAD, f"🎯 {text}")
+    send(HUB_THREAD, f"✅ Qabul qilindi → Haftalik maqsadlar: {text}")
 
 
 def process_update(update):
@@ -111,22 +122,33 @@ def process_update(update):
     text = msg.get("text")
     voice = msg.get("voice")
 
-    if thread_id not in (TASK_THREAD, GOAL_THREAD):
+    if thread_id in (TASK_THREAD, GOAL_THREAD):
+        send(thread_id, "Iltimos, \"Bot bilan gaplashish\" topicda yozing — men shu yerga avtomatik yozaman.")
+        return
+
+    if thread_id != HUB_THREAD:
         return
 
     if voice:
         text = transcribe_voice(voice["file_id"])
         if not text:
-            send(thread_id, "Ovozli xabarni tushunolmadim.")
+            send(HUB_THREAD, "Ovozli xabarni tushunolmadim.")
             return
 
     if not text:
         return
 
-    if thread_id == TASK_THREAD:
-        handle_task_message(text)
-    elif thread_id == GOAL_THREAD:
-        handle_goal_message(text)
+    parsed = classify_message(text)
+    if not parsed:
+        send(HUB_THREAD, "Tushunolmadim, qaytadan aniqroq yozing iltimos.")
+        return
+
+    if parsed["type"] == "task":
+        handle_task(parsed)
+    elif parsed["type"] == "goal":
+        handle_goal(parsed)
+    else:
+        send(HUB_THREAD, "Bu vazifa yoki maqsad ekanini tushunolmadim, qaytadan aniqroq yozing iltimos.")
 
 
 def main():
