@@ -12,6 +12,8 @@ HUB_THREAD = TOPICS["bot_bilan_gaplashish"]
 TASK_THREAD = TOPICS["bugungi_vazifalar"]
 GOAL_THREAD = TOPICS["haftalik_maqsadlar"]
 
+PENDING_TASK = None
+
 
 def send(thread_id, text):
     requests.post(f"{API}/sendMessage", json={
@@ -48,6 +50,8 @@ Xabar turini aniqla va JSON formatda chiqar, hech qanday qo'shimcha matn yozma:
   {{"type": "goal", "text": "maqsad matni"}}
 - Agar foydalanuvchi Google Meet/video uchrashuv link so'rasa:
   {{"type": "meet", "title": "uchrashuv nomi (aytilmagan bo'lsa 'Uchrashuv')"}}
+- Agar foydalanuvchi pochta/email/gmail'ni HOZIR tekshirishni so'rasa (masalan "pochtamni tekshir", "gmaildagi xabarlarni ko'rsat"):
+  {{"type": "gmail_check"}}
 - Agar bu vazifa ham, maqsad ham emas, oddiy SAVOL yoki SUHBAT bo'lsa:
   {{"type": "chat"}}
 - Agar tushunarsiz bo'lsa:
@@ -72,11 +76,65 @@ Sana aytilmagan bo'lsa bugungi sanani ishlat. Vaqt aytilmagan bo'lsa time ni nul
     raw = raw.strip("`").removeprefix("json").strip()
     try:
         data = json.loads(raw)
-        if data.get("type") not in ("task", "goal", "meet", "chat", "unknown"):
+        if data.get("type") not in ("task", "goal", "meet", "gmail_check", "chat", "unknown"):
             return None
         return data
     except json.JSONDecodeError:
         return None
+
+
+def classify_confirmation(text):
+    """Foydalanuvchi javobi tasdiq, rad etish yoki noaniq ekanini aniqlaydi."""
+    resp = requests.post(
+        "https://api.groq.com/openai/v1/chat/completions",
+        headers={"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"},
+        json={
+            "model": "llama-3.3-70b-versatile",
+            "messages": [
+                {"role": "system", "content": "Sen JSON qaytaradigan yordamchisan. Faqat JSON qaytar."},
+                {"role": "user", "content": f"""Foydalanuvchi shu javobni yozdi: "{text}"
+Bu tasdiqlash (ha, mayli, to'g'ri, qil) yoki rad etish (yo'q, kerak emas, bekor) yoki noaniq ekanini aniqla.
+Faqat shu JSON: {{"decision": "yes" yoki "no" yoki "unclear"}}"""},
+            ],
+            "max_tokens": 30,
+            "temperature": 0,
+        },
+    )
+    raw = resp.json()["choices"][0]["message"]["content"].strip().strip("`").removeprefix("json").strip()
+    try:
+        return json.loads(raw).get("decision", "unclear")
+    except json.JSONDecodeError:
+        return "unclear"
+
+
+def finalize_task(data):
+    title = data["title"]
+    task_date = data["date"]
+    task_time = data.get("time")
+
+    event_id, event_link = None, None
+    try:
+        import calendar_api
+        event_id, event_link = calendar_api.create_event(title, task_date, task_time)
+    except Exception as e:
+        print(f"Calendar xato: {e}")
+
+    db.add_task(title, task_date, task_time, event_id, event_link)
+
+    detail = f"✅ <b>Vazifa qo'shildi</b>\n{title}\n📅 {task_date}"
+    if task_time:
+        detail += f" ⏰ {task_time}"
+    if event_link:
+        detail += f"\n<a href=\"{event_link}\">Calendar'da ochish</a>"
+    send(TASK_THREAD, detail)
+    send(HUB_THREAD, f"✅ Qabul qilindi → Bugungi vazifalar: {title}")
+
+
+def handle_gmail_check(text=None):
+    send(HUB_THREAD, "📬 Pochta tekshirilmoqda...")
+    import gmail_digest
+    gmail_digest.get_gmail_digest()
+    send(HUB_THREAD, "✅ Gmail topicga yuborildi.")
 
 
 def handle_chat(text):
@@ -98,29 +156,20 @@ def handle_chat(text):
 
 
 def handle_task(data):
+    global PENDING_TASK
     title = data.get("title")
     task_date = data.get("date")
-    task_time = data.get("time")
     if not title or not task_date:
         send(HUB_THREAD, "Vazifani tushunolmadim, qaytadan aniqroq yozing iltimos.")
         return
 
-    event_id, event_link = None, None
-    try:
-        import calendar_api
-        event_id, event_link = calendar_api.create_event(title, task_date, task_time)
-    except Exception as e:
-        print(f"Calendar xato: {e}")
-
-    db.add_task(title, task_date, task_time, event_id, event_link)
-
-    detail = f"✅ <b>Vazifa qo'shildi</b>\n{title}\n📅 {task_date}"
+    task_time = data.get("time")
+    PENDING_TASK = data
+    confirm_text = f"❓ <b>Shu vazifani qo'shaymi?</b>\n{title}\n📅 {task_date}"
     if task_time:
-        detail += f" ⏰ {task_time}"
-    if event_link:
-        detail += f"\n<a href=\"{event_link}\">Calendar'da ochish</a>"
-    send(TASK_THREAD, detail)
-    send(HUB_THREAD, f"✅ Qabul qilindi → Bugungi vazifalar: {title}")
+        confirm_text += f" ⏰ {task_time}"
+    confirm_text += "\n\nTasdiqlash uchun \"ha\", bekor qilish uchun \"yo'q\" deb yozing."
+    send(HUB_THREAD, confirm_text)
 
 
 def handle_meet(data):
@@ -149,6 +198,7 @@ def handle_goal(data):
 
 
 def process_update(update):
+    global PENDING_TASK
     msg = update.get("message")
     if not msg:
         return
@@ -175,6 +225,18 @@ def process_update(update):
     if not text:
         return
 
+    if PENDING_TASK is not None:
+        decision = classify_confirmation(text)
+        if decision == "yes":
+            finalize_task(PENDING_TASK)
+            PENDING_TASK = None
+        elif decision == "no":
+            send(HUB_THREAD, "❌ Bekor qilindi.")
+            PENDING_TASK = None
+        else:
+            send(HUB_THREAD, "Tasdiqlash uchun \"ha\", bekor qilish uchun \"yo'q\" deb yozing.")
+        return
+
     parsed = classify_message(text)
     if not parsed:
         send(HUB_THREAD, "Tushunolmadim, qaytadan aniqroq yozing iltimos.")
@@ -186,6 +248,8 @@ def process_update(update):
         handle_goal(parsed)
     elif parsed["type"] == "meet":
         handle_meet(parsed)
+    elif parsed["type"] == "gmail_check":
+        handle_gmail_check()
     elif parsed["type"] == "chat":
         handle_chat(text)
     else:
