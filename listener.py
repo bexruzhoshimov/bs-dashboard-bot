@@ -46,6 +46,8 @@ Xabar turini aniqla va JSON formatda chiqar, hech qanday qo'shimcha matn yozma:
   {{"type": "task", "title": "vazifa nomi", "date": "YYYY-MM-DD", "time": "HH:MM yoki null"}}
 - Agar bu HAFTALIK/uzoq muddatli MAQSAD bo'lsa (masalan o'rganish, mashq qilish, odat):
   {{"type": "goal", "text": "maqsad matni"}}
+- Agar bu vazifa ham, maqsad ham emas, oddiy SAVOL yoki SUHBAT bo'lsa:
+  {{"type": "chat"}}
 - Agar tushunarsiz bo'lsa:
   {{"type": "unknown"}}
 
@@ -68,11 +70,29 @@ Sana aytilmagan bo'lsa bugungi sanani ishlat. Vaqt aytilmagan bo'lsa time ni nul
     raw = raw.strip("`").removeprefix("json").strip()
     try:
         data = json.loads(raw)
-        if data.get("type") not in ("task", "goal", "unknown"):
+        if data.get("type") not in ("task", "goal", "chat", "unknown"):
             return None
         return data
     except json.JSONDecodeError:
         return None
+
+
+def handle_chat(text):
+    resp = requests.post(
+        "https://api.groq.com/openai/v1/chat/completions",
+        headers={"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"},
+        json={
+            "model": "llama-3.3-70b-versatile",
+            "messages": [
+                {"role": "system", "content": "Sen o'zbek tilida do'stona javob beruvchi yordamchisan. Qisqa va tabiiy javob ber."},
+                {"role": "user", "content": text},
+            ],
+            "max_tokens": 400,
+            "temperature": 0.5,
+        },
+    )
+    reply = resp.json()["choices"][0]["message"]["content"].strip()
+    send(HUB_THREAD, reply)
 
 
 def handle_task(data):
@@ -147,8 +167,10 @@ def process_update(update):
         handle_task(parsed)
     elif parsed["type"] == "goal":
         handle_goal(parsed)
+    elif parsed["type"] == "chat":
+        handle_chat(text)
     else:
-        send(HUB_THREAD, "Bu vazifa yoki maqsad ekanini tushunolmadim, qaytadan aniqroq yozing iltimos.")
+        send(HUB_THREAD, "Tushunolmadim, qaytadan aniqroq yozing iltimos.")
 
 
 def main():
