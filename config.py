@@ -1,9 +1,11 @@
 import os
+from dotenv import load_dotenv
 
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
+load_dotenv()
+
+TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
+GROQ_API_KEY = os.environ["GROQ_API_KEY"]
 CHAT_ID = -1004308412289
-
 TOPICS = {
     "yangiliklar":        41,
     "moliya":             42,
