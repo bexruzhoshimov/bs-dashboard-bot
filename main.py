@@ -1,6 +1,7 @@
 from weather import get_weather_ai
 from news import get_full_news
 from finance import get_moliya
+from gmail_digest import get_gmail_digest
 
 print("🚀 B's Dashboard Bot ishga tushdi...")
 
@@ -12,5 +13,8 @@ get_full_news()
 
 print("\n💰 Moliya...")
 get_moliya()
+
+print("\n📬 Gmail...")
+get_gmail_digest()
 
 print("\n✅ Hammasi yuborildi!")

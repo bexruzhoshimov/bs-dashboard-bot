@@ -46,6 +46,8 @@ Xabar turini aniqla va JSON formatda chiqar, hech qanday qo'shimcha matn yozma:
   {{"type": "task", "title": "vazifa nomi", "date": "YYYY-MM-DD", "time": "HH:MM yoki null"}}
 - Agar bu HAFTALIK/uzoq muddatli MAQSAD bo'lsa (masalan o'rganish, mashq qilish, odat):
   {{"type": "goal", "text": "maqsad matni"}}
+- Agar foydalanuvchi Google Meet/video uchrashuv link so'rasa:
+  {{"type": "meet", "title": "uchrashuv nomi (aytilmagan bo'lsa 'Uchrashuv')"}}
 - Agar bu vazifa ham, maqsad ham emas, oddiy SAVOL yoki SUHBAT bo'lsa:
   {{"type": "chat"}}
 - Agar tushunarsiz bo'lsa:
@@ -70,7 +72,7 @@ Sana aytilmagan bo'lsa bugungi sanani ishlat. Vaqt aytilmagan bo'lsa time ni nul
     raw = raw.strip("`").removeprefix("json").strip()
     try:
         data = json.loads(raw)
-        if data.get("type") not in ("task", "goal", "chat", "unknown"):
+        if data.get("type") not in ("task", "goal", "meet", "chat", "unknown"):
             return None
         return data
     except json.JSONDecodeError:
@@ -121,6 +123,21 @@ def handle_task(data):
     send(HUB_THREAD, f"✅ Qabul qilindi → Bugungi vazifalar: {title}")
 
 
+def handle_meet(data):
+    title = data.get("title") or "Uchrashuv"
+    try:
+        import calendar_api
+        _, meet_link = calendar_api.create_meet(title)
+    except Exception as e:
+        send(HUB_THREAD, f"Meet yaratishda xato: {e}")
+        return
+
+    if meet_link:
+        send(HUB_THREAD, f"📹 <b>{title}</b>\n<a href=\"{meet_link}\">{meet_link}</a>")
+    else:
+        send(HUB_THREAD, "Meet link yaratilmadi, qaytadan urinib ko'ring.")
+
+
 def handle_goal(data):
     text = data.get("text")
     if not text:
@@ -167,6 +184,8 @@ def process_update(update):
         handle_task(parsed)
     elif parsed["type"] == "goal":
         handle_goal(parsed)
+    elif parsed["type"] == "meet":
+        handle_meet(parsed)
     elif parsed["type"] == "chat":
         handle_chat(text)
     else:

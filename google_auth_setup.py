@@ -2,7 +2,10 @@
 Faqat Mac'da (brauzer bor joyda) ishga tushiriladi, natija (token.json) serverga scp qilinadi."""
 from google_auth_oauthlib.flow import InstalledAppFlow
 
-SCOPES = ["https://www.googleapis.com/auth/calendar.events"]
+SCOPES = [
+    "https://www.googleapis.com/auth/calendar.events",
+    "https://www.googleapis.com/auth/gmail.readonly",
+]
 
 if __name__ == "__main__":
     flow = InstalledAppFlow.from_client_secrets_file("credentials.json", SCOPES)

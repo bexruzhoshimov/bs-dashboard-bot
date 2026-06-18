@@ -1,3 +1,4 @@
+import uuid
 from datetime import datetime, timedelta
 
 from google.auth.transport.requests import Request
@@ -37,3 +38,24 @@ def create_event(title, task_date, task_time):
 
     event = service.events().insert(calendarId="primary", body=body).execute()
     return event["id"], event.get("htmlLink")
+
+
+def create_meet(title):
+    service = _get_service()
+    now = datetime.now()
+    end = now + timedelta(hours=1)
+    body = {
+        "summary": title,
+        "start": {"dateTime": now.isoformat(), "timeZone": TIMEZONE},
+        "end": {"dateTime": end.isoformat(), "timeZone": TIMEZONE},
+        "conferenceData": {
+            "createRequest": {
+                "requestId": str(uuid.uuid4()),
+                "conferenceSolutionKey": {"type": "hangoutsMeet"},
+            }
+        },
+    }
+    event = service.events().insert(
+        calendarId="primary", body=body, conferenceDataVersion=1
+    ).execute()
+    return event["id"], event.get("hangoutLink")

@@ -13,5 +13,6 @@ TOPICS = {
     "ob_havo":              44,
     "bugungi_vazifalar":    45,
     "haftalik_maqsadlar":   46,
-    "bot_bilan_gaplashish": 105
+    "bot_bilan_gaplashish": 105,
+    "gmail":                119
 }
