@@ -1,4 +1,5 @@
-import base64
+import html
+import json
 
 import requests
 from google.auth.transport.requests import Request
@@ -29,6 +30,7 @@ def _get_snippet(service, msg_id):
         "from": headers.get("From", "?"),
         "subject": headers.get("Subject", "(mavzu yo'q)"),
         "snippet": msg.get("snippet", ""),
+        "link": f"https://mail.google.com/mail/u/0/#all/{msg_id}",
     }
 
 
@@ -49,15 +51,15 @@ def get_gmail_digest():
         return
 
     items = [_get_snippet(service, m["id"]) for m in messages]
-    items_text = "\n".join(f"- {i['from']}: {i['subject']} — {i['snippet']}" for i in items)
+    items_text = "\n".join(f"{idx}. {i['from']}: {i['subject']} — {i['snippet']}" for idx, i in enumerate(items))
 
-    prompt = f"""Quyidagi muhim va o'qilmagan email'lar ro'yxati:
+    prompt = f"""Quyidagi muhim va o'qilmagan email'lar ro'yxati (raqamlangan):
 {items_text}
 
-Har biri uchun qisqa o'zbek tilida xulosa yoz. Faqat shu formatda:
-📧 <b>[jo'natuvchi qisqa nomi]</b>: [bir gapda nima haqida]
+Har biri uchun bir gapli o'zbek tilida xulosa yoz. Faqat shu JSON formatda chiqar:
+{{"summaries": ["[0-raqamli xat xulosasi]", "[1-raqamli xat xulosasi]", ...]}}
 
-Boshqa hech narsa qo'shma, o'ylab topma, faqat berilgan ma'lumotdan foydalan."""
+Ro'yxat tartibini saqla, har bir elementga mos bitta xulosa. O'ylab topma, faqat berilgan ma'lumotdan foydalan."""
 
     resp = requests.post(
         "https://api.groq.com/openai/v1/chat/completions",
@@ -65,21 +67,34 @@ Boshqa hech narsa qo'shma, o'ylab topma, faqat berilgan ma'lumotdan foydalan."""
         json={
             "model": "llama-3.3-70b-versatile",
             "messages": [
-                {"role": "system", "content": "Sen o'zbek tilida email xulosalovchisan. Faqat berilgan ma'lumotdan foydalan, o'ylab topma."},
+                {"role": "system", "content": "Sen JSON qaytaradigan email xulosalovchisan. Faqat JSON qaytar, boshqa hech narsa yozma."},
                 {"role": "user", "content": prompt},
             ],
             "max_tokens": 600,
             "temperature": 0.1,
         },
     )
-    ai_text = resp.json()["choices"][0]["message"]["content"]
+    raw = resp.json()["choices"][0]["message"]["content"].strip().strip("`").removeprefix("json").strip()
+    try:
+        summaries = json.loads(raw).get("summaries", [])
+    except json.JSONDecodeError:
+        summaries = []
+
+    blocks = []
+    for idx, item in enumerate(items):
+        summary = summaries[idx] if idx < len(summaries) else item["subject"]
+        sender = html.escape(item["from"])
+        blocks.append(
+            f"📧 <b>{sender}</b>: {html.escape(summary)}\n🔗 <a href=\"{item['link']}\">Xatni ochish</a>"
+        )
+    text = "📬 <b>Gmail — muhim xatlar</b>\n\n" + "\n\n".join(blocks)
 
     result = requests.post(
         f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
         json={
             "chat_id": CHAT_ID,
             "message_thread_id": TOPICS["gmail"],
-            "text": f"📬 <b>Gmail — muhim xatlar</b>\n\n{ai_text}",
+            "text": text,
             "parse_mode": "HTML",
         },
     )
