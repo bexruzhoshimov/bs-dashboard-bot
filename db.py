@@ -21,9 +21,15 @@ def init_db():
             calendar_event_id TEXT,
             calendar_link TEXT,
             reminder_sent INTEGER NOT NULL DEFAULT 0,
+            done INTEGER NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL
         )
     """)
+    try:
+        conn.execute("ALTER TABLE tasks ADD COLUMN done INTEGER NOT NULL DEFAULT 0")
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass
     conn.execute("""
         CREATE TABLE IF NOT EXISTS goals (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -44,13 +50,29 @@ def init_db():
 
 def add_task(title, task_date, task_time, calendar_event_id=None, calendar_link=None):
     conn = get_conn()
-    conn.execute(
+    cur = conn.execute(
         "INSERT INTO tasks (title, date, time, calendar_event_id, calendar_link, created_at) "
         "VALUES (?, ?, ?, ?, ?, datetime('now'))",
         (title, task_date, task_time, calendar_event_id, calendar_link),
     )
     conn.commit()
+    task_id = cur.lastrowid
     conn.close()
+    return task_id
+
+
+def mark_done(task_id):
+    conn = get_conn()
+    conn.execute("UPDATE tasks SET done = 1 WHERE id = ?", (task_id,))
+    conn.commit()
+    conn.close()
+
+
+def get_task(task_id):
+    conn = get_conn()
+    row = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+    conn.close()
+    return row
 
 
 def get_due_reminders(window_minutes=30):

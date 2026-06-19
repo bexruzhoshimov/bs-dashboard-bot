@@ -24,6 +24,35 @@ def send(thread_id, text):
     })
 
 
+def send_with_buttons(thread_id, text, buttons):
+    resp = requests.post(f"{API}/sendMessage", json={
+        "chat_id": CHAT_ID,
+        "message_thread_id": thread_id,
+        "text": text,
+        "parse_mode": "HTML",
+        "reply_markup": {"inline_keyboard": buttons},
+    })
+    return resp.json().get("result", {}).get("message_id")
+
+
+def answer_callback(callback_id, text=None):
+    payload = {"callback_query_id": callback_id}
+    if text:
+        payload["text"] = text
+    requests.post(f"{API}/answerCallbackQuery", json=payload)
+
+
+def edit_message(message_id, text, buttons=None):
+    payload = {
+        "chat_id": CHAT_ID,
+        "message_id": message_id,
+        "text": text,
+        "parse_mode": "HTML",
+        "reply_markup": {"inline_keyboard": buttons or []},
+    }
+    requests.post(f"{API}/editMessageText", json=payload)
+
+
 def transcribe_voice(file_id):
     file_info = requests.get(f"{API}/getFile", params={"file_id": file_id}).json()
     file_path = file_info["result"]["file_path"]
@@ -120,14 +149,14 @@ def finalize_task(data):
     except Exception as e:
         print(f"Calendar xato: {e}")
 
-    db.add_task(title, task_date, task_time, event_id, event_link)
+    task_id = db.add_task(title, task_date, task_time, event_id, event_link)
 
     detail = f"✅ <b>Vazifa qo'shildi</b>\n{title}\n📅 {task_date}"
     if task_time:
         detail += f" ⏰ {task_time}"
     if event_link:
         detail += f"\n<a href=\"{event_link}\">Calendar'da ochish</a>"
-    send(TASK_THREAD, detail)
+    send_with_buttons(TASK_THREAD, detail, [[{"text": "✅ Bajarildi", "callback_data": f"done:{task_id}"}]])
     send(HUB_THREAD, f"✅ Qabul qilindi → Bugungi vazifalar: {title}")
 
 
@@ -169,8 +198,10 @@ def handle_task(data):
     confirm_text = f"❓ <b>Shu vazifani qo'shaymi?</b>\n{title}\n📅 {task_date}"
     if task_time:
         confirm_text += f" ⏰ {task_time}"
-    confirm_text += "\n\nTasdiqlash uchun \"ha\", bekor qilish uchun \"yo'q\" deb yozing."
-    send(HUB_THREAD, confirm_text)
+    send_with_buttons(HUB_THREAD, confirm_text, [[
+        {"text": "✅ Ha", "callback_data": "confirm_yes"},
+        {"text": "❌ Yo'q", "callback_data": "confirm_no"},
+    ]])
 
 
 def handle_meet(data):
@@ -198,8 +229,45 @@ def handle_goal(data):
     send(HUB_THREAD, f"✅ Qabul qilindi → Haftalik maqsadlar: {text}")
 
 
+def process_callback(callback_query):
+    global PENDING_TASK
+    data = callback_query.get("data", "")
+    callback_id = callback_query["id"]
+    message = callback_query.get("message", {})
+    message_id = message.get("message_id")
+
+    if data == "confirm_yes":
+        if PENDING_TASK is None:
+            answer_callback(callback_id, "Bu so'rov eskirgan.")
+            return
+        task = PENDING_TASK
+        PENDING_TASK = None
+        answer_callback(callback_id, "Tasdiqlandi")
+        edit_message(message_id, f"✅ Tasdiqlandi: {task['title']}")
+        finalize_task(task)
+    elif data == "confirm_no":
+        PENDING_TASK = None
+        answer_callback(callback_id, "Bekor qilindi")
+        edit_message(message_id, "❌ Bekor qilindi.")
+    elif data.startswith("done:"):
+        task_id = int(data.split(":", 1)[1])
+        db.mark_done(task_id)
+        answer_callback(callback_id, "Bajarildi deb belgilandi")
+        task = db.get_task(task_id)
+        title = task["title"] if task else ""
+        edit_message(message_id, f"✅ <b>Bajarildi</b>\n{title}")
+    else:
+        answer_callback(callback_id)
+
+
 def process_update(update):
     global PENDING_TASK
+
+    callback_query = update.get("callback_query")
+    if callback_query:
+        process_callback(callback_query)
+        return
+
     msg = update.get("message")
     if not msg:
         return
